@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unlimited-OCR · P1 demo</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#2a2f3a; --text:#e6e8ee; --muted:#8b93a7; --accent:#4c8dff; --ok:#3ecf8e; --err:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:20px 28px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:17px; margin:0; font-weight:600; }
+  .badge { font-size:12px; padding:2px 8px; border-radius:99px; border:1px solid var(--line); color:var(--muted); }
+  .badge.mock { color:#f5c451; border-color:#5a4a1a; }
+  .badge.live { color:var(--ok); border-color:#1d4d39; }
+  main { display:grid; grid-template-columns: 1fr 1.4fr; gap:20px; padding:24px 28px; max-width:1300px; margin:0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px; }
+  .drop { border:2px dashed var(--line); border-radius:10px; padding:36px 16px; text-align:center; cursor:pointer; transition:border-color .15s, background .15s; }
+  .drop.over { border-color:var(--accent); background:#1a2233; }
+  .drop p { margin:6px 0; color:var(--muted); }
+  .drop strong { color:var(--text); }
+  #preview { max-width:100%; max-height:320px; display:none; margin-top:14px; border-radius:6px; border:1px solid var(--line); }
+  button { margin-top:14px; width:100%; padding:10px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  #status { margin-top:12px; font-size:13px; color:var(--muted); min-height:20px; }
+  #status.err { color:var(--err); } #status.ok { color:var(--ok); }
+  #out { min-height:420px; }
+  #out h1,#out h2 { border-bottom:1px solid var(--line); padding-bottom:4px; }
+  #out table { border-collapse:collapse; margin:10px 0; }
+  #out th,#out td { border:1px solid var(--line); padding:5px 10px; }
+  #out code { background:#232836; padding:1px 5px; border-radius:4px; }
+  #out blockquote { margin:0; padding:6px 12px; border-left:3px solid #f5c451; color:#d8c48a; background:#1f1c12; }
+  .empty { color:var(--muted); text-align:center; padding-top:140px; }
+  .tabs { display:flex; gap:8px; margin-bottom:10px; }
+  .tabs button { width:auto; margin:0; padding:6px 12px; background:#232836; font-weight:500; }
+  .tabs button.on { background:var(--accent); }
+  pre#raw { display:none; white-space:pre-wrap; font:13px/1.5 ui-monospace,Menlo,monospace; margin:0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Unlimited-OCR · P1 sync demo</h1>
+  <span id="mode" class="badge">checking…</span>
+  <span class="badge">Pages → Edge Function → GPU (vLLM)</span>
+</header>
+<main>
+  <section class="panel">
+    <div id="drop" class="drop">
+      <p><strong>Drop an image here</strong></p>
+      <p>or click to browse · PNG / JPG / WebP · max 2 MB</p>
+      <p style="font-size:12px">Multi-page PDFs use the async path (P2).</p>
+      <input id="file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+    </div>
+    <img id="preview" alt="preview">
+    <button id="go" disabled>Parse document</button>
+    <div id="status"></div>
+  </section>
+  <section class="panel">
+    <div class="tabs">
+      <button id="tRender" class="on">Rendered</button>
+      <button id="tRaw">Markdown</button>
+    </div>
+    <div id="out"><div class="empty">Parsed Markdown will appear here.</div></div>
+    <pre id="raw"></pre>
+  </section>
+</main>
+<script>
+const API = "/functions/api/ocr";
+const MAX = 2 * 1024 * 1024;
+const TYPES = ["image/png", "image/jpeg", "image/webp"];
+const $ = (id) => document.getElementById(id);
+let file = null;
+
+fetch(API).then(r => r.json()).then(d => {
+  $("mode").textContent = d.mode === "live" ? "live backend" : "mock backend";
+  $("mode").className = "badge " + (d.mode === "live" ? "live" : "mock");
+}).catch(() => { $("mode").textContent = "function unreachable"; });
+
+function setStatus(msg, cls) { $("status").textContent = msg; $("status").className = cls || ""; }
+
+function pick(f) {
+  if (!f) return;
+  if (!TYPES.includes(f.type)) return setStatus("Unsupported type: " + (f.type || "unknown"), "err");
+  if (f.size > MAX) return setStatus(`Too large: ${(f.size/1048576).toFixed(2)} MB (max 2 MB)`, "err");
+  file = f;
+  $("preview").src = URL.createObjectURL(f);
+  $("preview").style.display = "block";
+  $("go").disabled = false;
+  setStatus(`${f.name} · ${(f.size/1024).toFixed(0)} KB`);
+}
+
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+$("file").onchange = (e) => pick(e.target.files[0]);
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); pick(e.dataTransfer.files[0]); };
+
+$("go").onclick = async () => {
+  if (!file) return;
+  $("go").disabled = true;
+  setStatus("Parsing…");
+  const t0 = performance.now();
+  try {
+    const r = await fetch(API, {
+      method: "POST",
+      headers: { "Content-Type": file.type, "X-File-Name": encodeURIComponent(file.name) },
+      body: file,
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+    $("raw").textContent = d.markdown;
+    $("out").innerHTML = md(d.markdown);
+    setStatus(`Done in ${Math.round(performance.now() - t0)} ms · mode: ${d.mode}`, "ok");
+  } catch (e) {
+    setStatus("Error: " + e.message, "err");
+  } finally {
+    $("go").disabled = false;
+  }
+};
+
+$("tRender").onclick = () => { $("out").style.display = ""; $("raw").style.display = "none"; $("tRender").className = "on"; $("tRaw").className = ""; };
+$("tRaw").onclick = () => { $("out").style.display = "none"; $("raw").style.display = "block"; $("tRaw").className = "on"; $("tRender").className = ""; };
+
+// Minimal, escape-first Markdown renderer (headings, tables, quotes, bold/italic/code, hr, paragraphs)
+function esc(s) { return s.replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c])); }
+function inline(s) {
+  return esc(s).replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[\s(])_([^_]+)_/g, "$1<em>$2</em>");
+}
+function md(src) {
+  const lines = src.split("\n"); let html = "", i = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^#{1,6}\s/.test(l)) { const n = l.match(/^#+/)[0].length; html += `<h${n}>${inline(l.slice(n+1))}</h${n}>`; i++; continue; }
+    if (/^---+$/.test(l.trim())) { html += "<hr>"; i++; continue; }
+    if (l.startsWith(">")) { html += `<blockquote>${inline(l.replace(/^>\s?/, ""))}</blockquote>`; i++; continue; }
+    if (l.trim().startsWith("|") && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i+1])) {
+      const cells = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      html += "<table><thead><tr>" + cells(l).map(c => `<th>${inline(c)}</th>`).join("") + "</tr></thead><tbody>";
+      i += 2;
+      while (i < lines.length && lines[i].trim().startsWith("|")) { html += "<tr>" + cells(lines[i]).map(c => `<td>${inline(c)}</td>`).join("") + "</tr>"; i++; }
+      html += "</tbody></table>"; continue;
+    }
+    if (l.trim() === "") { i++; continue; }
+    html += `<p>${inline(l)}</p>`; i++;
+  }
+  return html;
+}
+</script>
+</body>
+</html>
